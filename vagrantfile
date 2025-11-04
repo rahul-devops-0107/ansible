@@ -1,0 +1,40 @@
+# -*- mode: ruby -*-                # Tells editors to use Ruby mode for this file
+# vi: set ft=ruby :                 # Vim editor hint to treat file as Ruby
+
+VAGRANTFILE_API_VERSION = "2"       # Sets the Vagrantfile API version to 2
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|  # Starts Vagrant configuration block
+
+  config.ssh.insert_key = false     # Disables automatic SSH key insertion for VMs
+
+  config.vm.provider :virtualbox do |vb|                # Configures VirtualBox-specific settings
+    vb.customize ["modifyvm", :id, "--memory", "2048"]  # Sets VM memory to 2048 MB
+  end
+
+  # Common provisioning script for all VMs
+  common_provision = <<-SHELL
+    echo 'vagrant ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/vagrant  # Allows vagrant user passwordless sudo
+    sudo chmod 0440 /etc/sudoers.d/vagrant                                   # Sets correct permissions for sudoers file
+  SHELL
+
+  config.vm.define "Master" do |app|                 # Defines a VM named "Master"
+    app.vm.hostname = "Master"                       # Sets the VM hostname to "Master"
+    app.vm.box = "bento/ubuntu-22.04"                # Uses the Bento Ubuntu 22.04 box
+    app.vm.network :private_network, ip: "10.10.11.97" # Assigns a private IP address
+    app.vm.provision "shell", inline: common_provision # Runs the common provisioning script
+  end
+
+  config.vm.define "QA-Server" do |app|              # Defines a VM named "QA-Server"
+    app.vm.hostname = "QA-Server"                    # Sets the VM hostname to "QA-Server"
+    app.vm.box = "bento/ubuntu-22.04"                # Uses the Bento Ubuntu 22.04 box
+    app.vm.network :private_network, ip: "10.10.11.98" # Assigns a private IP address
+    app.vm.provision "shell", inline: common_provision # Runs the common provisioning script
+  end
+
+  config.vm.define "Prod-Server" do |app|            # Defines a VM named "Prod-Server"
+    app.vm.hostname = "Prod-Server"                  # Sets the VM hostname to "Prod-Server"
+    app.vm.box = "bento/ubuntu-22.04"                # Uses the Bento Ubuntu 22.04 box
+    app.vm.network :private_network, ip: "10.10.11.96" # Assigns a private IP address
+    app.vm.provision "shell", inline: common_provision # Runs the common provisioning script
+  end
+end                                                # Ends the Vagrant configuration block

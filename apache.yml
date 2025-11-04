@@ -1,0 +1,118 @@
+---
+- name: Install and configure Apache with conditional restart and rollback
+  hosts: all
+  become: yes
+
+  vars:
+    apache_conf_src: /home/vagrant/apache-config.conf
+    apache_conf_dest: /etc/apache2/sites-available/000-default.conf
+    apache_backup: /etc/apache2/sites-available/000-default.conf.bak
+
+  tasks:
+    # 1️⃣ Install Apache package
+    - name: Install Apache web server
+      apt:
+        name: apache2
+        state: present
+        update_cache: yes
+      register: apache_install_result
+
+    # 2️⃣ Backup existing configuration
+    - name: Backup current Apache config
+      copy:
+        src: "{{ apache_conf_dest }}"
+        dest: "{{ apache_backup }}"
+        remote_src: yes
+      when: apache_install_result.changed == false or apache_install_result is defined
+      ignore_errors: yes  # In case file doesn't exist on first run
+
+    # 3️⃣ Deploy new configuration
+    - name: Deploy Apache configuration file
+      copy:
+        src: "{{ apache_conf_src }}"
+        dest: "{{ apache_conf_dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      register: apache_config_result
+
+    # 4️⃣ Restart Apache ONLY if config changed
+    - name: Restart Apache service if configuration changed
+      service:
+        name: apache2
+        state: restarted
+      when: apache_config_result.changed
+
+    # 5️⃣ Health check — only if restart occurred
+    - name: Check Apache health
+      uri:
+        url: "http://{{ inventory_hostname }}/"
+        status_code: 200
+        timeout: 5
+      register: apache_healthcheck
+      retries: 5
+      delay: 3
+      until: apache_healthcheck.status == 200
+      ignore_errors: yes
+      when: apache_config_result.changed
+
+    # 6️⃣ Rollback if health check failed
+    - name: Rollback to previous configuration if health check failed
+      block:
+        - name: Restore backup config
+          copy:
+            src: "{{ apache_backup }}"
+            dest: "{{ apache_conf_dest }}"
+            remote_src: yes
+
+        - name: Restart Apache after rollback
+          service:
+            name: apache2
+            state: restarted
+
+        - name: Confirm rollback worked
+          uri:
+            url: "http://{{ inventory_hostname }}/"
+            status_code: 200
+            timeout: 5
+      when:
+        - apache_config_result.changed
+        - apache_healthcheck is failed or apache_healthcheck.status != 200
+...
+
+# This playbook is used to demonstrate the tasks interdependency
+# Whenever we need a task to run only if the other task ran and made some changes
+# Then in the master task we need to use register: <name> to capture the result of the task
+# and using that result in the slave task we need to use when: <register-name.changed>
+#
+# You can look at the code to understand how the interdependency works
+#
+# ==================================================================================================
+# 🧾 SUMMARY: Apache Deployment with Conditional Restart and Rollback
+# --------------------------------------------------------------------------------------------------
+# This Ansible playbook automates the installation and configuration of the Apache web server
+# on Linux systems. It ensures safe, reliable deployments by performing conditional restarts and
+# automatic rollbacks if the new configuration causes service failure.
+#
+# ⚙️ KEY FEATURES:
+#   - Installs Apache (apache2) package automatically on target hosts
+#   - Deploys a predefined Apache configuration file
+#   - Creates a backup of the existing configuration before applying changes
+#   - Restarts Apache only if configuration changes occur
+#   - Performs a health check (expects HTTP 200) after restart
+#   - Rolls back to the previous configuration automatically if health check fails
+#
+# 🧩 EXECUTION FLOW:
+#   1. Install Apache → Ensure the web server is present
+#   2. Backup existing config → Create a safe rollback copy
+#   3. Deploy new config → Replace if configuration differs
+#   4. Restart Apache (conditional) → Trigger only on change
+#   5. Health check → Validate service availability
+#   6. Rollback (if failed) → Restore previous working config
+#
+# ✅ OUTCOME:
+#   - Safe configuration deployment with automatic recovery
+#   - Idempotent and self-healing automation for Apache
+#   - Maintains uptime and consistency across multiple hosts
+# ==================================================================================================
+---

@@ -1,0 +1,167 @@
+---
+- name: Tomcat deployment with conditional restart and health check
+  hosts: all
+  become: yes
+  vars:
+    tomcat_service_name: tomcat9
+    healthcheck_url: "http://{{ inventory_hostname }}:8080"
+
+  tasks:
+    - name: Install tomcat9
+      apt:
+        name: tomcat9
+        state: present
+        update_cache: yes
+    - name: Install tomcat9-admin
+      apt:
+        name: tomcat9-admin
+        state: present
+        update_cache: no
+    - name: Deploy tomcat-users.xml
+      copy:
+        src: /home/vagrant/tomcat-users.xml
+        dest: /etc/tomcat9/tomcat-users.xml
+        owner: root
+        group: tomcat
+        mode: '0640'
+      notify: Restart Tomcat
+      register: tomcat_users_result
+
+  handlers:
+    - name: Restart Tomcat
+      become: yes
+      service:
+        name: "{{ tomcat_service_name }}"
+        state: restarted
+      register: tomcat_restart_result
+      listen: Restart Tomcat
+
+    - name: Wait for Tomcat to start and respond (only if restarted)
+      uri:
+        url: "{{ healthcheck_url }}"
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 10
+      delay: 5
+      when: tomcat_restart_result is defined and tomcat_restart_result.changed
+      listen: Restart Tomcat
+...
+
+##  | Field           | Meaning                                                       | What It Tells You                                               |
+##| --------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
+##| **ok**          | Number of tasks that ran successfully                         | ✅ Tasks executed and completed without issues                   |
+##| **changed**     | Number of tasks that made actual modifications                | 🔧 Something was updated (e.g., file copied, service restarted) |
+##| **unreachable** | Host connection failed (e.g., SSH issue)                      | ❌ 0 = good; non-zero means host couldn’t be reached             |
+##| **failed**      | Tasks that failed on that host                                | 🚫 0 = no failures — your playbook ran successfully             |
+##| **skipped**     | Tasks skipped due to `when:` conditions                       | ⏭️ 0 = no conditional skips                                     |
+##| **rescued**     | Tasks recovered by an Ansible `rescue:` block                 | 🩹 0 = no errors needed recovery                                |
+##| **ignored**     | Tasks that failed but were ignored using `ignore_errors: yes` | 🙈 0 = nothing ignored                                          |
+
+
+## This playbook is created to run when we install tomcat9 and tomcat9-admin, then modify the tomcat-users.xml then only we need to restart the tomcat9 service and if the tomcat9 service is restarted then only we need to check the url response of tomcat9 server.
+#
+#This is to explain that when we have dependency on each block to run the tasks we can follow this approach
+#
+
+# Purpose: Deploy and manage Apache Tomcat with conditional restart and health verification
+# ===============================================================================================
+# 🧾 SUMMARY: Tomcat Deployment with Conditional Restart and Health Check
+# -----------------------------------------------------------------------------------------------
+# This playbook installs, configures, and manages Apache Tomcat on Linux servers using Ansible.
+# It demonstrates a safe and automated workflow for updating Tomcat configuration files
+# (such as tomcat-users.xml) and conditionally restarting the service when changes occur.
+#
+# ⚙️ KEY FEATURES:
+#   - Installs Tomcat and admin packages on all target hosts.
+#   - Deploys a configuration file (e.g., tomcat-users.xml).
+#   - Uses 'notify' to trigger a service restart **only if** configuration changes occur.
+#   - Uses 'listen' to group multiple related handlers under a single event.
+#   - Includes a health check after restart to ensure Tomcat is running properly.
+#
+# 🧩 WORKFLOW:
+#   1. Copy or modify the Tomcat configuration file.
+#   2. If the file changes, Ansible triggers the 'notify' event → restart_tomcat.
+#   3. Handlers listening on 'restart_tomcat' will execute in sequence:
+#         - Restart the Tomcat service
+#         - Wait for the Tomcat health check to pass (only if restarted)
+#
+# 🧠 ABOUT 'listen':
+#   - 'listen' allows multiple handlers to respond to the same event name.
+#   - For example, if multiple handlers use:
+#         listen: restart_tomcat
+#     and a task has:
+#         notify: restart_tomcat
+#     then *all* handlers listening on that event will execute.
+#
+# 🧩 ADVANCED USAGE:
+#   - You can chain logic using 'register' + 'when' inside handlers.
+#     Example:
+#         - Restart Tomcat → register: restart_result
+#         - Health Check → when: restart_result is changed
+#   - This ensures the health check runs only if the restart actually occurred.
+#
+# ✅ OUTCOME:
+#   - Automatic Tomcat installation and configuration management.
+#   - Restart only when required (idempotent behavior).
+#   - Verified healthy service after configuration updates.
+# ===============================================================================================
+---
+
+# ===============================================================================================
+# 🧾 SUMMARY: Understanding 'listen', 'register', and Handler Dependencies in Ansible
+# -----------------------------------------------------------------------------------------------
+# This playbook demonstrates how to manage dependencies between handlers using Ansible's
+# 'listen', 'register', and 'when' keywords.
+#
+# ⚙️ KEY CONCEPTS:
+#   • 'notify' — Triggers a handler only when the notifying task reports a change.
+#   • 'listen' — Groups multiple handlers under one common event name.
+#                 Example: notify: restart_tomcat  → triggers all handlers that
+#                 have listen: restart_tomcat.
+#   • 'register' — Captures the result (status, changed state, output) of a task or handler.
+#   • 'when' — Adds conditional logic to control execution (e.g., run only if a previous
+#               handler actually changed something).
+#
+# 🧩 HANDLER DEPENDENCY LOGIC:
+#   - Handlers that share the same 'listen' name are triggered together by one notify event.
+#   - This groups them logically (not hierarchically) — they don’t depend on each other by default.
+#   - To make one handler depend on another’s result:
+#         1️⃣ Add 'register' in the master handler (e.g., restart service).
+#         2️⃣ Add 'when: <registered_var> is changed' in the slave handler (e.g., health check).
+#
+# 🧠 EXECUTION ORDER OF HANDLERS WITH 'listen':
+#   - All handlers listening on the same event (e.g., 'restart_tomcat') run in the **same order**
+#     they are defined in the playbook’s handler section.
+#   - Example:
+#         1. Handler A (Restart Tomcat)
+#         2. Handler B (Wait for health)
+#     → Both will run sequentially when 'notify: restart_tomcat' is triggered.
+#   - Handlers are executed **after all tasks** in the play have completed, unless you use
+#     'meta: flush_handlers' to run them immediately.
+#
+# 🧠 EXAMPLE:
+#   handlers:
+#     - name: Restart Tomcat service
+#       listen: restart_tomcat
+#       service:
+#         name: tomcat9
+#         state: restarted
+#       register: restart_result
+#
+#     - name: Wait for Tomcat health check
+#       listen: restart_tomcat
+#       uri:
+#         url: "http://localhost:8080/health"
+#         status_code: 200
+#       when: restart_result is changed
+#
+# ✅ RESULT:
+#   - Both handlers are grouped under the same event ('restart_tomcat').
+#   - They execute sequentially in the order they appear in the handlers section.
+#   - The second handler (health check) runs only if the first (restart) changed.
+#   - This provides controlled, predictable handler dependencies in Ansible.
+# ===============================================================================================
+
+
+---
